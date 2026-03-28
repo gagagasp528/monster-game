@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Monster Quest Battle Rebuild</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#0f172a; --panel2:#f7f2e7; --ink:#172033; --muted:#5f6d86; --line:#243250;
+    --blue:#3b82f6; --green:#22c55e; --red:#ef4444; --gold:#f59e0b;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:radial-gradient(circle at top,#17315b,#0a1220 60%,#070d16);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
+  body{display:flex;justify-content:center}
+  .app{
+    width:100%;max-width:430px;height:100dvh;
+    display:grid;grid-template-rows:40px 28px minmax(0,1fr) 164px;
+    gap:6px;padding:6px 6px calc(8px + env(safe-area-inset-bottom));
+  }
+  .bar,.sub,.panel,.controlsWrap{
+    border-radius:16px;border:1px solid rgba(255,255,255,.08);
+    background:rgba(8,15,26,.76);backdrop-filter:blur(10px)
+  }
+  .bar{padding:0 12px;display:flex;align-items:center;font-weight:900;font-size:15px}
+  .sub{padding:0 12px;display:flex;align-items:center;font-size:11px;color:#d9e5ff}
+  .panel{padding:6px;overflow:hidden;min-height:0}
+  canvas{width:100%;height:100%;display:block;border-radius:12px;border:2px solid #243250;background:#000;image-rendering:pixelated;image-rendering:crisp-edges}
+  .controlsWrap{padding:8px}
+  .controls{display:grid;grid-template-columns:132px 66px 132px;justify-content:space-between;align-items:end;gap:6px}
+  .dpad{display:grid;grid-template-columns:42px 42px 42px;grid-template-rows:42px 42px 42px;gap:3px}
+  .mid{display:grid;grid-template-rows:1fr 1fr;gap:6px}
+  .ab{display:grid;grid-template-columns:62px 62px;grid-template-rows:52px 52px;gap:6px;justify-content:end}
+  .touch{
+    border:none;border-radius:14px;background:rgba(255,255,255,.14);color:#fff;font-weight:900;
+    border:1px solid rgba(255,255,255,.1);box-shadow:0 8px 18px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.12);
+    min-width:42px;min-height:42px;font-size:16px
+  }
+  .touch.slim{font-size:12px}
+  .touch.wide{min-width:62px;min-height:52px;font-size:18px}
+  .touch:active,.touch.active{transform:scale(.97);background:rgba(255,255,255,.24)}
+  .ghost{visibility:hidden}
+  @media (max-height:760px){
+    .app{grid-template-rows:36px 26px minmax(0,1fr) 152px}
+    .controls{grid-template-columns:120px 58px 120px}
+    .dpad{grid-template-columns:38px 38px 38px;grid-template-rows:38px 38px 38px}
+    .ab{grid-template-columns:56px 56px;grid-template-rows:48px 48px}
+    .touch{min-width:38px;min-height:38px;font-size:14px}
+    .touch.wide{min-width:56px;min-height:48px}
+  }
+  @media (min-width:760px){
+    .app{max-width:980px;grid-template-columns:1fr 300px;grid-template-rows:40px 28px minmax(0,1fr);grid-template-areas:"bar bar" "sub sub" "panel ctrl"}
+    .bar{grid-area:bar}.sub{grid-area:sub}.panel{grid-area:panel}.controlsWrap{grid-area:ctrl;display:flex;align-items:center}
+    .controls{width:100%;grid-template-columns:1fr;grid-template-rows:auto auto auto;justify-items:center}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">Monster Quest Battle Rebuild</div>
+  <div class="sub">不具合を潰して、歩行＋草むら＋トレーナー＋ボス＋ターン制戦闘を入れた版</div>
+  <div class="panel"><canvas id="game" width="480" height="720"></canvas></div>
+  <div class="controlsWrap">
+    <div class="controls">
+      <div class="dpad">
+        <button class="touch ghost"></button>
+        <button class="touch" data-key="up">▲</button>
+        <button class="touch ghost"></button>
+        <button class="touch" data-key="left">◀</button>
+        <button class="touch ghost"></button>
+        <button class="touch" data-key="right">▶</button>
+        <button class="touch ghost"></button>
+        <button class="touch" data-key="down">▼</button>
+        <button class="touch ghost"></button>
+      </div>
+      <div class="mid">
+        <button class="touch slim" data-key="menu">MENU</button>
+        <button class="touch slim" data-key="back">B</button>
+      </div>
+      <div class="ab">
+        <button class="touch ghost"></button>
+        <button class="touch wide" data-key="a">A</button>
+        <button class="touch ghost"></button>
+        <button class="touch wide" data-key="b">B</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+const TILE = 32, MAP_W = 15, MAP_H = 18;
+
+const COLORS = {
+  sky:"#9ed0ff", grass:"#7fc34a", grass2:"#4e8b2a", tall:"#5da82f", path:"#cdb58a", path2:"#ad9264",
+  water:"#4ba3ff", water2:"#2d78c6", tree:"#267339", tree2:"#184f25", trunk:"#6f4c2f",
+  roofR:"#d75454", roofB:"#4d79ff", wall:"#f0e7d5", door:"#a77950", ui:"#f7f2e7", ink:"#172033", line:"#243250",
+  shadow:"rgba(0,0,0,.18)"
+};
+const TYPES=["fire","water","electric","grass","psychic","flying","ground","rock","ice","normal"];
+const TYPE_JP={fire:"ほのお",water:"みず",electric:"でんき",grass:"くさ",psychic:"エスパー",flying:"ひこう",ground:"じめん",rock:"いわ",ice:"こおり",normal:"ノーマル"};
+const TYPE_COL={fire:"#ef4444",water:"#3b82f6",electric:"#f59e0b",grass:"#22c55e",psychic:"#8b5cf6",flying:"#0ea5e9",ground:"#a16207",rock:"#78716c",ice:"#06b6d4",normal:"#64748b"};
+const CHART={fire:{grass:1.5,ice:1.5,water:.5,rock:.5},water:{fire:1.5,rock:1.5,ground:1.5,grass:.5,electric:.5},electric:{water:1.5,flying:1.5,ground:.5,grass:.5},grass:{water:1.5,ground:1.5,rock:1.5,fire:.5,flying:.5,ice:.5},psychic:{psychic:.5},flying:{grass:1.5,electric:.5,rock:.5,ice:.5},ground:{electric:1.5,fire:1.5,rock:1.5,grass:.5,flying:.5},rock:{flying:1.5,ice:1.5,fire:1.5,ground:.5},ice:{grass:1.5,flying:1.5,ground:1.5,fire:.5,rock:.5,water:.5},normal:{}};
+
+const rand = n => Math.floor(Math.random()*n);
+const pick = a => a[rand(a.length)];
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const uid = () => Math.random().toString(36).slice(2,10);
+const save = () => { try{ localStorage.setItem("monster_rebuild_battle", JSON.stringify(state)); }catch(e){} };
+const load = () => { try{ const x = localStorage.getItem("monster_rebuild_battle"); return x ? JSON.parse(x) : null; }catch(e){ return null; } };
+const mult = (a,b) => CHART[a]?.[b] || 1;
+
+function genMoves(){
+  const parts={fire:["フレア","ヒート","マグマ","ブレイズ"],water:["アクア","ウェーブ","タイド","ミスト"],electric:["ボルト","サンダー","スパーク","プラズマ"],grass:["リーフ","ソーン","ブルーム","ヴァイン"],psychic:["サイコ","ドリーム","ミラー","マインド"],flying:["エア","ガスト","スカイ","フェザー"],ground:["アース","サンド","テラ","クエイク"],rock:["ロック","ストーン","クリフ","クラッシュ"],ice:["アイス","フロスト","スノー","ブリザ"],normal:["ラッシュ","タックル","キック","パンチ"]};
+  const suf=["ショット","バースト","スラッシュ","ノヴァ","ランス","クロス"];
+  const out=[]; let id=1;
+  for(const t of TYPES){
+    for(let i=0;i<8;i++) out.push({id:"m"+id++, name:parts[t][i%4]+suf[i%6], type:t, cat:"atk", power:28+i*4, pp:14, acc:94});
+    out.push({id:"m"+id++, name:parts[t][0]+"ヒール", type:t, cat:"heal", pp:6, acc:100});
+    out.push({id:"m"+id++, name:parts[t][1]+"ミスト", type:t, cat:"sleep", pp:5, acc:90});
+  }
+  return out.slice(0,150);
+}
+const MOVES = genMoves();
+const MOVE_BY_ID = Object.fromEntries(MOVES.map(m=>[m.id,m]));
+
+function genSpecies(){
+  const A=["ア","イ","ウ","エ","オ","カ","キ","ク","ケ","コ","サ","シ","ス","セ","ソ","タ","チ","ツ","テ","ト","ナ","ニ","ヌ","ネ","ノ","ハ","ヒ","フ","ヘ","ホ","マ","ミ","ム","メ","モ","ラ","リ","ル","レ","ロ","ヤ","ユ","ヨ"];
+  const B=["ラン","ミア","ズン","リオ","ノル","フェ","ガ","ドラ","ピコ","ティ","バ","シア","ロン","ネア","ギル","ラ","トス","ニア","ポ","クス"];
+  const out=[]; let no=1;
+  for(let fam=0; fam<50; fam++){
+    const t1=TYPES[fam%9], t2=TYPES[(fam*3+2)%9];
+    const root=(A[fam%A.length]||"ア")+(B[fam%B.length]||"ラ");
+    const names=[root+"ン",root+"ード",root+"ザウル"];
+    const pool=MOVES.filter(m=>m.type===t1 || m.type===t2 || m.type==="normal");
+    const learn=[1,4,8,12,16,20,26,32].map((lv,i)=>({lv,id:pool[(fam*5+i*2)%pool.length].id}));
+    for(let s=0;s<3;s++){
+      out.push({
+        id:"mon_"+no, name:names[s], family:fam, stage:s, type1:t1, type2:(s===2&&fam%4===0)?t2:null,
+        base:{hp:34+(fam%8)*2+s*14, atk:18+(fam*2)%10+s*10, def:17+(fam*3)%10+s*9, spd:16+(fam*5)%10+s*8},
+        evolveTo:s<2?("mon_"+(no+1)):null, evolveLv:s===0?16:(s===1?36:null), learn
+      });
+      no++;
+    }
+  }
+  out.push({
+    id:"mon_151", name:"レグナディア", family:999, stage:2, type1:"psychic", type2:"ice",
+    base:{hp:88,atk:80,def:76,spd:84}, evolveTo:null, evolveLv:null,
+    learn:[{lv:1,id:MOVES[0].id},{lv:1,id:MOVES[1].id},{lv:20,id:MOVES[10].id},{lv:40,id:MOVES[20].id}]
+  });
+  return out;
+}
+const SPECIES = genSpecies();
+const SPECIES_BY_ID = Object.fromEntries(SPECIES.map(s=>[s.id,s]));
+
+function calcStats(spec,lv){ return {hp:Math.floor(spec.base.hp+lv*3.2), atk:Math.floor(spec.base.atk+lv*2.1), def:Math.floor(spec.base.def+lv*1.9), spd:Math.floor(spec.base.spd+lv*2)}; }
+function knownMoves(spec,lv){ return spec.learn.filter(x=>x.lv<=lv).slice(-4).map(x=>({id:x.id, pp:MOVE_BY_ID[x.id].pp})); }
+function createMon(id,lv){ const sp=SPECIES_BY_ID[id], stats=calcStats(sp,lv); return {instanceId:uid(), speciesId:id, nickname:sp.name, lv, exp:0, stats, hp:stats.hp, moves:knownMoves(sp,lv), status:null, turns:0}; }
+function restoreMon(m){ const sp=SPECIES_BY_ID[m.speciesId]; if(!m.stats) m.stats=calcStats(sp,m.lv); if(m.hp==null) m.hp=m.stats.hp; if(!m.moves||!m.moves.length) m.moves=knownMoves(sp,m.lv); m.moves=m.moves.map(mm=>({id:mm.id, pp:mm.pp ?? MOVE_BY_ID[mm.id].pp})); return m; }
+function needExp(lv){ return 20+lv*8; }
+function relearn(m){ const sp=SPECIES_BY_ID[m.speciesId]; m.moves=sp.learn.filter(x=>x.lv<=m.lv).slice(-4).map(x=>({id:x.id, pp:MOVE_BY_ID[x.id].pp})); }
+function tryEvo(m){ const sp=SPECIES_BY_ID[m.speciesId]; if(sp.evolveTo && m.lv>=sp.evolveLv){ m.speciesId=sp.evolveTo; const nx=SPECIES_BY_ID[m.speciesId]; m.nickname=nx.name; m.stats=calcStats(nx,m.lv); m.hp=m.stats.hp; relearn(m); } }
+function gainExp(m,exp){ m.exp += exp; while(m.exp>=needExp(m.lv)){ m.exp-=needExp(m.lv); m.lv++; m.stats=calcStats(SPECIES_BY_ID[m.speciesId],m.lv); m.hp=m.stats.hp; relearn(m); tryEvo(m);} }
+
+const baseMaps = {
+  town:{
+    data:[
+      "ttttttttttttttt",
+      "tgggggggggggggt",
+      "tggghhhggghhhgt",
+      "tggghhhggghhhgt",
+      "tggghhhppphhhgt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tpppppppppppppt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "ttttttteetttttt",
+    ],
+    start:{x:7,y:13},
+    npcs:[
+      {x:10,y:8,type:"trainer",name:"トレーナー リク",flag:"rik"},
+      {x:7,y:4,type:"boss",name:"ボス ミナト",flag:"boss1"}
+    ],
+    exits:[{x:7,y:17,to:"route",tx:7,ty:1},{x:8,y:17,to:"route",tx:8,ty:1}]
+  },
+  route:{
+    data:[
+      "ttttttteetttttt",
+      "tggggggpppggggt",
+      "tgggwwwpppggggt",
+      "tgggwwwpppggggt",
+      "tggggggpppggggt",
+      "tgggssspppsssgt",
+      "tgggssspppsssgt",
+      "tgggssspppsssgt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tpppppppppppppt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "tgggssspppsssgt",
+      "tgggssspppsssgt",
+      "tggggggpppggggt",
+      "tggggggpppggggt",
+      "ttttttteetttttt",
+    ],
+    start:{x:7,y:1},
+    npcs:[
+      {x:5,y:8,type:"trainer",name:"トレーナー ナオ",flag:"nao"},
+      {x:12,y:14,type:"trainer",name:"トレーナー ミラ",flag:"mira"}
+    ],
+    exits:[{x:7,y:0,to:"town",tx:7,ty:16},{x:8,y:0,to:"town",tx:8,ty:16}]
+  }
+};
+
+function freshMaps(){ return JSON.parse(JSON.stringify(baseMaps)); }
+function defaultState(){
+  return {
+    scene:"title",
+    starterCursor:0,
+    starterIds:["mon_1","mon_4","mon_7"],
+    message:"Aで決定",
+    maps:freshMaps(),
+    flags:{},
+    player:{name:"主人公", gender:"boy", money:800, balls:8, potions:4, badges:0, map:"town", x:7, y:13, party:[createMon("mon_1",5)]},
+    battle:null,
+    face:{x:0,y:1}
+  };
+}
+let state = load() || defaultState();
+state.player.party = (state.player.party || []).map(restoreMon);
+if(!state.player.party.length) state.player.party=[createMon("mon_1",5)];
+
+const input={up:false,down:false,left:false,right:false,a:false,b:false,menu:false,back:false};
+document.querySelectorAll("[data-key]").forEach(btn=>{
+  const key=btn.dataset.key;
+  const on=e=>{ e.preventDefault(); input[key]=true; btn.classList.add("active"); };
+  const off=e=>{ e.preventDefault(); input[key]=false; btn.classList.remove("active"); };
+  btn.addEventListener("pointerdown",on);
+  btn.addEventListener("pointerup",off);
+  btn.addEventListener("pointerleave",off);
+  btn.addEventListener("pointercancel",off);
+});
+
+window.addEventListener("keydown",e=>{
+  const k=e.key.toLowerCase();
+  if(k==="arrowup"||k==="w") input.up=true;
+  if(k==="arrowdown"||k==="s") input.down=true;
+  if(k==="arrowleft"||k==="a") input.left=true;
+  if(k==="arrowright"||k==="d") input.right=true;
+  if(k==="z"||k==="enter") input.a=true;
+  if(k==="x"||k==="escape") input.b=true;
+  if(k==="c") input.menu=true;
+});
+window.addEventListener("keyup",e=>{
+  const k=e.key.toLowerCase();
+  if(k==="arrowup"||k==="w") input.up=false;
+  if(k==="arrowdown"||k==="s") input.down=false;
+  if(k==="arrowleft"||k==="a") input.left=false;
+  if(k==="arrowright"||k==="d") input.right=false;
+  if(k==="z"||k==="enter") input.a=false;
+  if(k==="x"||k==="escape") input.b=false;
+  if(k==="c") input.menu=false;
+});
+
+const hero = () => state.player.party[0];
+const tileAt = (map,x,y) => (x<0||y<0||x>=MAP_W||y>=MAP_H) ? "t" : state.maps[map].data[y][x];
+const walkable = t => !["t","w","h"].includes(t);
+const npcAt = (map,x,y) => state.maps[map].npcs.find(n => !state.flags[n.flag] && n.x===x && n.y===y);
+const facing = () => ({x:state.player.x+state.face.x, y:state.player.y+state.face.y});
+
+function rr(x,y,w,h,r=12,fill=COLORS.ui,stroke=COLORS.line){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+  ctx.fillStyle=fill; ctx.fill();
+  ctx.strokeStyle=stroke; ctx.lineWidth=3; ctx.stroke();
+}
+function text(t,x,y,c=COLORS.ink,s=16,w="900",a="left"){
+  ctx.fillStyle=c; ctx.font=`${w} ${s}px system-ui`; ctx.textAlign=a; ctx.fillText(t,x,y);
+}
+function clear(){ ctx.fillStyle="#0b1527"; ctx.fillRect(0,0,canvas.width,canvas.height); }
+function drawHouse(x,y,roof=COLORS.roofR){
+  ctx.fillStyle=COLORS.wall; ctx.fillRect(x+2,y+10,28,20);
+  ctx.fillStyle=roof; ctx.beginPath(); ctx.moveTo(x,y+12); ctx.lineTo(x+16,y); ctx.lineTo(x+32,y+12); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=COLORS.door; ctx.fillRect(x+12,y+20,8,10);
+}
+function drawTree(x,y){
+  ctx.fillStyle=COLORS.tree2; ctx.beginPath(); ctx.arc(x+16,y+10,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=COLORS.tree; ctx.beginPath(); ctx.arc(x+11,y+16,11,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+21,y+16,11,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=COLORS.trunk; ctx.fillRect(x+13,y+18,6,12);
+}
+function drawPerson(kind,x,y){
+  const c = kind==="boss" ? "#ef4444" : kind==="trainer" ? "#8b5cf6" : "#2563eb";
+  ctx.fillStyle="rgba(0,0,0,.18)"; ctx.fillRect(x+8,y+28,16,4);
+  ctx.fillStyle="#f4c38b"; ctx.fillRect(x+11,y+4,10,8);
+  ctx.fillStyle=c; ctx.fillRect(x+8,y+12,16,12);
+  ctx.fillStyle="#0f172a"; ctx.fillRect(x+9,y+24,5,8); ctx.fillRect(x+18,y+24,5,8);
+}
+function drawMonSprite(x,y,type){
+  ctx.fillStyle="rgba(0,0,0,.18)"; ctx.fillRect(x+6,y+26,20,4);
+  ctx.fillStyle=TYPE_COL[type] || "#64748b";
+  ctx.beginPath(); ctx.arc(x+16,y+16,12,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#fff"; ctx.fillRect(x+10,y+11,3,3); ctx.fillRect(x+19,y+11,3,3);
+  ctx.fillStyle="#111"; ctx.fillRect(x+11,y+12,1,1); ctx.fillRect(x+20,y+12,1,1);
+}
+function drawTile(t,x,y){
+  if(t==="g"){ ctx.fillStyle=COLORS.grass; ctx.fillRect(x,y,TILE,TILE); ctx.fillStyle=COLORS.grass2; for(let i=0;i<4;i++) ctx.fillRect(x+4+i*6,y+20-rand(4),2,6+rand(4)); }
+  else if(t==="s"){ ctx.fillStyle=COLORS.grass; ctx.fillRect(x,y,TILE,TILE); ctx.fillStyle=COLORS.tall; for(let i=0;i<6;i++) ctx.fillRect(x+2+i*5,y+14+rand(5),3,12-rand(3)); }
+  else if(t==="p"){ ctx.fillStyle=COLORS.path; ctx.fillRect(x,y,TILE,TILE); ctx.fillStyle=COLORS.path2; for(let i=0;i<4;i++) ctx.fillRect(x+5+i*7,y+6+rand(14),2,2); }
+  else if(t==="w"){ ctx.fillStyle=COLORS.water; ctx.fillRect(x,y,TILE,TILE); ctx.fillStyle=COLORS.water2; ctx.fillRect(x+3,y+8,11,2); ctx.fillRect(x+16,y+18,10,2); }
+  else if(t==="t"){ ctx.fillStyle=COLORS.grass; ctx.fillRect(x,y,TILE,TILE); drawTree(x,y); }
+  else if(t==="h"){ ctx.fillStyle=COLORS.grass; ctx.fillRect(x,y,TILE,TILE); drawHouse(x,y, ((x/TILE+y/TILE)%2===0) ? COLORS.roofR : COLORS.roofB); }
+  else if(t==="e"){ ctx.fillStyle=COLORS.path; ctx.fillRect(x,y,TILE,TILE); ctx.fillStyle=COLORS.gold; ctx.fillRect(x+12,y+8,8,16); }
+}
+function hud(titleLine, subLine){
+  rr(8,8,464,70,16,"rgba(247,242,231,.96)",COLORS.line);
+  text(titleLine,24,35,COLORS.ink,20);
+  text(subLine,24,60,COLORS.muted,13,"800");
+}
+function msgBox(msg, helper){
+  rr(8,584,464,128,16,"rgba(247,242,231,.98)",COLORS.line);
+  text(msg,24,620,COLORS.ink,16);
+  text(helper,24,652,COLORS.muted,13,"800");
+}
+function drawTag(type,x,y){
+  rr(x,y,70,22,11,TYPE_COL[type],TYPE_COL[type]);
+  text(TYPE_JP[type],x+35,y+15,"#fff",11,"900","center");
+}
+function drawHp(x,y,w,h,p){
+  rr(x,y,w,h,h/2,"#e5e7eb","#d5d8dd");
+  const ww=Math.max(h, w*clamp(p,0,1));
+  ctx.fillStyle="#22c55e";
+  ctx.beginPath();
+  ctx.moveTo(x+h/2,y); ctx.arcTo(x+ww,y,x+ww,y+h,h/2); ctx.arcTo(x+ww,y+h,x,y+h,h/2); ctx.arcTo(x,y+h,x,y,h/2); ctx.arcTo(x,y,x+ww,y,h/2); ctx.fill();
+}
+
+function drawTitle(){
+  clear();
+  rr(16,16,448,108,18,COLORS.ui,COLORS.line);
+  text("Monster Quest",32,56,COLORS.ink,30);
+  text("不具合を潰した戦闘入り版",32,88,COLORS.muted,16,"800");
+
+  rr(16,136,448,204,18,COLORS.ui,COLORS.line);
+  text("主人公",32,170,COLORS.ink,20);
+  text("Bで性別切替 / 左右でスターター変更",32,198,COLORS.muted,14,"800");
+  text(state.player.gender==="boy"?"男の子":"女の子",32,232,"#2563eb",22);
+  text("スターター",32,270,COLORS.ink,18);
+  state.starterIds.forEach((id,i)=>{
+    const sp=SPECIES_BY_ID[id], x=42+i*138, y=286;
+    drawMonSprite(x,y,sp.type1);
+    if(i===state.starterCursor){
+      ctx.strokeStyle="#f59e0b"; ctx.lineWidth=4; ctx.strokeRect(x-8,y-8,48,48);
+    }
+    text(sp.name.slice(0,2),x+16,y+58,COLORS.ink,14,"900","center");
+  });
+
+  rr(16,354,448,350,18,COLORS.ui,COLORS.line);
+  text("Aでゲーム開始",32,392,"#16a34a",26);
+  text("・青スターター選択修正",32,432,COLORS.muted,16,"800");
+  text("・町 / ルート移動修正",32,470,COLORS.muted,16,"800");
+  text("・草むらで野生戦",32,508,COLORS.muted,16,"800");
+  text("・トレーナー / ボス戦",32,546,COLORS.muted,16,"800");
+  text("・ガチ戦闘システム実装",32,584,COLORS.muted,16,"800");
+}
+function drawMap(){
+  clear();
+  const map=state.maps[state.player.map];
+  for(let y=0;y<MAP_H;y++) for(let x=0;x<MAP_W;x++) drawTile(map.data[y][x],x*TILE,y*TILE);
+  map.npcs.forEach(n=>{ if(!state.flags[n.flag]) drawPerson(n.type,n.x*TILE,n.y*TILE); });
+  drawPerson("player", state.player.x*TILE, state.player.y*TILE);
+  const place = state.player.map==="town" ? "はじまりタウン" : "ルート1";
+  hud(place, `主人公 ${state.player.name} / バッジ ${state.player.badges} / ボール ${state.player.balls} / 回復 ${state.player.potions}`);
+  msgBox(state.message || "移動して旅を進めよう。", state.player.map==="town" ? "A:調べる MENU:ルートへ B:情報" : "A:調べる MENU:会話 B:町へ");
+}
+function drawBattle(){
+  const b=state.battle, me=b.player, enemy=b.enemy;
+  clear();
+  ctx.fillStyle=COLORS.sky; ctx.fillRect(14,14,452,152);
+  ctx.fillStyle="#5ea84f"; ctx.fillRect(14,90,452,76);
+  ctx.fillStyle="rgba(51,102,35,.35)";
+  ctx.beginPath(); ctx.ellipse(100,126,82,22,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(360,72,78,20,0,0,Math.PI*2); ctx.fill();
+
+  drawMonSprite(70,92,SPECIES_BY_ID[me.speciesId].type1);
+  drawMonSprite(344,42,SPECIES_BY_ID[enemy.speciesId].type1);
+
+  rr(18,18,182,68,14,COLORS.ui,COLORS.line);
+  text(`${enemy.nickname} Lv${enemy.lv}`,28,44);
+  drawHp(28,60,152,10,enemy.hp/enemy.stats.hp);
+
+  rr(264,92,198,72,14,COLORS.ui,COLORS.line);
+  text(`${me.nickname} Lv${me.lv}`,274,118);
+  drawHp(274,134,162,10,me.hp/me.stats.hp);
+
+  rr(14,178,452,108,16,COLORS.ui,COLORS.line);
+  text(b.log,28,208,COLORS.ink,16);
+  text("A: 技 / MENU: 捕獲 or 次 / B: 回復",28,246,COLORS.muted,13,"800");
+
+  rr(14,298,452,408,16,COLORS.ui,COLORS.line);
+  text("技",28,332,COLORS.ink,18);
+  b.player.moves.forEach((m,i)=>{
+    const mv=MOVE_BY_ID[m.id], y=366+i*78;
+    rr(26,y-24,428,58,12, i===b.cursor ? "#dbe8ff" : "#ffffff", "#dbe2ef");
+    text(mv.name,42,y,COLORS.ink,16);
+    text(`${TYPE_JP[mv.type]} / PP ${m.pp}/${mv.pp}`,438,y,COLORS.muted,13,"800","right");
+  });
+  if(b.flash>0){
+    ctx.fillStyle=(TYPE_COL[b.flashType] || "#fff")+"66";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+}
+
+function interact(){
+  const f=facing();
+  const npc=npcAt(state.player.map,f.x,f.y);
+  if(npc){
+    if(npc.type==="trainer") return startTrainerBattle(npc);
+    if(npc.type==="boss") return startBossBattle(npc);
+  }
+  state.message="なにもない。";
+}
+function move(dx,dy){
+  state.face={x:dx,y:dy};
+  const nx=state.player.x+dx, ny=state.player.y+dy;
+  if(npcAt(state.player.map,nx,ny)) return;
+  const t=tileAt(state.player.map,nx,ny);
+  if(!walkable(t)) return;
+  state.player.x=nx; state.player.y=ny;
+  const exits=state.maps[state.player.map].exits;
+  const ex=exits.find(e=>e.x===nx && e.y===ny);
+  if(ex){
+    state.player.map=ex.to; state.player.x=ex.tx; state.player.y=ex.ty;
+    state.message=ex.to==="route" ? "ルート1へ出た。" : "はじまりタウンへ戻った。";
+    return;
+  }
+  if(t==="s" && Math.random()<0.18) startWildBattle();
+}
+function startWildBattle(){
+  const fam=rand(50), stage=(Math.random()>.75?1:0), id="mon_"+(fam*3+stage+1), lv=3+rand(5);
+  state.battle={mode:"wild", player:JSON.parse(JSON.stringify(hero())), enemy:createMon(id,lv), cursor:0, log:"野生のモンスターが現れた！", flash:0, flashType:"normal"};
+  state.scene="battle";
+}
+function startTrainerBattle(npc){
+  const fam=(npc.flag==="rik"?8:(npc.flag==="nao"?11:14));
+  const lv=(npc.flag==="rik"?8:(npc.flag==="nao"?10:12));
+  state.battle={mode:"trainer", npcFlag:npc.flag, player:JSON.parse(JSON.stringify(hero())), enemy:createMon("mon_"+(fam*3+1),lv), cursor:0, log:`${npc.name} が勝負をしかけてきた！`, flash:0, flashType:"normal"};
+  state.scene="battle";
+}
+function startBossBattle(npc){
+  state.battle={mode:"boss", npcFlag:npc.flag, player:JSON.parse(JSON.stringify(hero())), enemy:createMon("mon_35",14), cursor:0, log:`${npc.name} が勝負をしかけてきた！`, flash:0, flashType:"normal"};
+  state.scene="battle";
+}
+function usePotion(){
+  const b=state.battle, me=b.player;
+  if(state.player.potions<=0){ b.log="きずぐすりがない！"; return; }
+  if(me.hp>=me.stats.hp){ b.log="HPは満タンだ"; return; }
+  state.player.potions--;
+  me.hp=Math.min(me.stats.hp, me.hp+48);
+  b.log=`${me.nickname} のHPが回復した！`;
+  enemyTurn();
+}
+function catchMon(){
+  const b=state.battle;
+  if(b.mode!=="wild") return;
+  if(state.player.balls<=0){ b.log="ボールがない！"; return; }
+  state.player.balls--;
+  const rate=clamp(.34 + (1-b.enemy.hp/b.enemy.stats.hp)*.46, .12, .90);
+  if(Math.random()<rate){
+    if(state.player.party.length<99) state.player.party.push(JSON.parse(JSON.stringify(b.enemy)));
+    state.scene="map"; state.message=`${b.enemy.nickname} を捕まえた！`; return;
+  }
+  b.log=`${b.enemy.nickname} は飛び出した！`;
+  enemyTurn();
+}
+function useMove(attacker, defender, moveState){
+  const mv=MOVE_BY_ID[moveState.id];
+  if(moveState.pp<=0) return `${mv.name} はPP切れだ！`;
+  moveState.pp--;
+  if(Math.random()*100 > (mv.acc||100)) return `${attacker.nickname} の ${mv.name}！ 外れた！`;
+  if(mv.cat==="heal"){
+    const heal=Math.floor(attacker.stats.hp*.35);
+    attacker.hp=Math.min(attacker.stats.hp, attacker.hp+heal);
+    return `${attacker.nickname} の ${mv.name}！ HPが ${heal} 回復した。`;
+  }
+  if(mv.cat==="sleep"){
+    defender.status="sleep"; defender.turns=1+rand(3);
+    return `${defender.nickname} は眠ってしまった！`;
+  }
+  let dmg=Math.max(2, Math.floor((mv.power + attacker.lv*1.8 + attacker.stats.atk*.85 - defender.stats.def*.4) * (.88+Math.random()*.24)));
+  const asp=SPECIES_BY_ID[attacker.speciesId], dsp=SPECIES_BY_ID[defender.speciesId];
+  let m=mult(mv.type,dsp.type1)*(dsp.type2?mult(mv.type,dsp.type2):1);
+  if(mv.type===asp.type1 || mv.type===asp.type2) m*=1.15;
+  dmg=Math.max(1, Math.floor(dmg*m));
+  defender.hp=Math.max(0, defender.hp-dmg);
+  state.battle.flashType=mv.type; state.battle.flash=4;
+  let txt=`${attacker.nickname} の ${mv.name}！ ${dmg} ダメージ！`;
+  if(m>=1.5) txt+=" 効果はばつぐんだ！";
+  if(m<=.5) txt+=" 効果はいまひとつだ。";
+  return txt;
+}
+function enemyTurn(){
+  const b=state.battle;
+  if(!b || b.enemy.hp<=0 || b.player.hp<=0) return;
+  const available=b.enemy.moves.filter(x=>x.pp>0);
+  const m=available.length ? pick(available) : b.enemy.moves[0];
+  b.log=useMove(b.enemy,b.player,m);
+  if(b.player.hp<=0){
+    hero().hp=hero().stats.hp;
+    state.scene="map"; state.message="負けた… いったん立て直そう。";
+  }
+}
+function finishWin(){
+  const b=state.battle, me=b.player;
+  gainExp(me,16+b.enemy.lv*7);
+  state.player.party[0]=JSON.parse(JSON.stringify(me));
+  if(b.mode==="wild"){ state.player.money += 20+b.enemy.lv*8; state.message="野生戦に勝った。"; }
+  if(b.mode==="trainer"){ state.flags[b.npcFlag]=1; state.player.money += 120; state.message="トレーナーに勝った！"; }
+  if(b.mode==="boss"){ state.flags[b.npcFlag]=1; state.player.badges++; state.player.money += 400; state.message="ボスに勝ってバッジを手に入れた！"; }
+  state.scene="map";
+}
+function doTurn(){
+  const b=state.battle, my=b.player.moves[b.cursor];
+  const enemyAvailable=b.enemy.moves.filter(x=>x.pp>0);
+  const em=enemyAvailable.length ? pick(enemyAvailable) : b.enemy.moves[0];
+  const first=b.player.stats.spd>=b.enemy.stats.spd;
+  const order=first ? [[b.player,b.enemy,my],[b.enemy,b.player,em]] : [[b.enemy,b.player,em],[b.player,b.enemy,my]];
+  for(const [a,d,m] of order){
+    if(a.hp<=0 || d.hp<=0) continue;
+    if(a.status==="sleep"){
+      a.turns--; b.log=`${a.nickname} は眠っている！`; if(a.turns<=0) a.status=null; continue;
+    }
+    b.log=useMove(a,d,m);
+    if(d.hp<=0) break;
+  }
+  if(b.enemy.hp<=0) finishWin();
+  else if(b.player.hp<=0){ hero().hp=hero().stats.hp; state.scene="map"; state.message="負けた… 町で立て直そう。"; }
+}
+
+function pressA(){
+  if(state.scene==="title"){ state.player.party=[createMon(state.starterIds[state.starterCursor],5)]; state.scene="map"; state.player.map="town"; state.player.x=7; state.player.y=13; state.message="旅が始まった。"; return; }
+  if(state.scene==="map"){ interact(); return; }
+  if(state.scene==="battle"){ doTurn(); return; }
+}
+function pressB(){
+  if(state.scene==="title"){ state.player.gender = state.player.gender==="boy" ? "girl" : "boy"; return; }
+  if(state.scene==="map"){
+    if(state.player.map==="route"){ state.player.map="town"; state.player.x=7; state.player.y=16; state.message="町へ戻った。"; }
+    else { state.message=`先頭 ${hero().nickname} Lv${hero().lv} HP ${hero().hp}/${hero().stats.hp}`; }
+    return;
+  }
+  if(state.scene==="battle"){ usePotion(); return; }
+}
+function pressMenu(){
+  if(state.scene==="map"){
+    if(state.player.map==="town"){ state.player.map="route"; state.player.x=7; state.player.y=1; state.message="ルートへ出た。"; }
+    else { interact(); }
+    return;
+  }
+  if(state.scene==="battle"){ if(state.battle.mode==="wild") catchMon(); }
+}
+function pressLeft(){
+  if(state.scene==="title"){ state.starterCursor=(state.starterCursor+2)%3; return; }
+  if(state.scene==="map"){ move(-1,0); return; }
+  if(state.scene==="battle"){ state.battle.cursor=Math.max(0,state.battle.cursor-1); }
+}
+function pressRight(){
+  if(state.scene==="title"){ state.starterCursor=(state.starterCursor+1)%3; return; }
+  if(state.scene==="map"){ move(1,0); return; }
+  if(state.scene==="battle"){ state.battle.cursor=Math.min(state.battle.player.moves.length-1,state.battle.cursor+1); }
+}
+function pressUp(){ if(state.scene==="map") move(0,-1); }
+function pressDown(){ if(state.scene==="map") move(0,1); }
+
+let lock=0;
+function tickInput(){
+  if(lock>0){ lock--; return; }
+  if(input.a){ pressA(); lock=10; }
+  else if(input.b||input.back){ pressB(); lock=10; }
+  else if(input.menu){ pressMenu(); lock=10; }
+  else if(input.left){ pressLeft(); lock=7; }
+  else if(input.right){ pressRight(); lock=7; }
+  else if(input.up){ pressUp(); lock=7; }
+  else if(input.down){ pressDown(); lock=7; }
+}
+
+function loop(){
+  tickInput();
+  if(state.scene==="battle" && state.battle.flash>0) state.battle.flash--;
+  clear();
+  if(state.scene==="title") drawTitle();
+  else if(state.scene==="map") drawMap();
+  else if(state.scene==="battle") drawBattle();
+  save();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script>
+</body>
+</html>
